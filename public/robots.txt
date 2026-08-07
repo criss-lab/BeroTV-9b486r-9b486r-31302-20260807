@@ -1,0 +1,10 @@
+User-agent: *
+Allow: /
+Disallow: /login
+Disallow: /profile
+Disallow: /favorites
+
+Sitemap: https://mkvsat.onspace.app/sitemap.xml
+
+# Crawl-delay
+Crawl-delay: 10

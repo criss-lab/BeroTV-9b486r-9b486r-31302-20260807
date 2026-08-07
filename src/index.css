@@ -1,0 +1,212 @@
+/* Full-screen webapp: hide browser UI chrome on mobile */
+@viewport { width: device-width; }
+
+html {
+  /* Fill entire screen including safe areas */
+  height: -webkit-fill-available;
+  overflow-x: hidden;
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background-color: #0a0a14;
+  color: #ffffff;
+  min-height: 100vh;
+  min-height: -webkit-fill-available;
+  min-height: 100dvh; /* Dynamic viewport height */
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* Prevent pull-to-refresh on mobile */
+  overscroll-behavior-y: none;
+}
+
+#root {
+  min-height: 100dvh;
+}
+
+/* Hide scrollbars but keep functionality */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/* Custom scrollbar for desktop */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: #0a0a14;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(245, 158, 11, 0.2);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(245, 158, 11, 0.4);
+}
+
+/* Safe area padding utilities */
+.safe-area-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.safe-area-top {
+  padding-top: env(safe-area-inset-top);
+}
+
+/* Full-screen page fill for streaming */
+.full-screen-fill {
+  height: 100dvh;
+  height: 100svh;
+  overflow: hidden;
+}
+
+/* Video player full-width */
+video {
+  width: 100%;
+  max-width: 100%;
+}
+
+/* Smooth animations */
+* {
+  box-sizing: border-box;
+}
+
+/* Active state for touch */
+button:active {
+  opacity: 0.85;
+}
+
+/* Input reset */
+input, textarea, select {
+  background: transparent;
+  outline: none;
+}
+
+/* Image optimization */
+img {
+  max-width: 100%;
+  height: auto;
+}
+
+/* CSS Custom Properties for HSL colors */
+@layer base {
+  :root {
+    --background: 235 40% 6%;
+    --foreground: 0 0% 100%;
+    --card: 235 35% 10%;
+    --card-foreground: 0 0% 98%;
+    --popover: 235 40% 8%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 43 100% 50%;
+    --primary-foreground: 0 0% 0%;
+    --secondary: 235 30% 15%;
+    --secondary-foreground: 0 0% 90%;
+    --muted: 235 20% 15%;
+    --muted-foreground: 0 0% 50%;
+    --accent: 43 100% 50%;
+    --accent-foreground: 0 0% 0%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 235 20% 15%;
+    --input: 235 20% 15%;
+    --ring: 43 100% 50%;
+    --radius: 0.75rem;
+    --chart-1: 43 100% 50%;
+    --chart-2: 200 80% 50%;
+    --chart-3: 280 70% 60%;
+    --chart-4: 120 60% 45%;
+    --chart-5: 0 70% 55%;
+  }
+}
+
+/* Light mode overrides */
+.light {
+  --background: 0 0% 96%;
+  --foreground: 235 40% 10%;
+  --card: 0 0% 100%;
+  --card-foreground: 235 40% 10%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 235 40% 10%;
+  --primary: 43 100% 45%;
+  --primary-foreground: 0 0% 0%;
+  --secondary: 0 0% 90%;
+  --secondary-foreground: 235 40% 10%;
+  --muted: 0 0% 92%;
+  --muted-foreground: 0 0% 45%;
+  --accent: 43 100% 45%;
+  --accent-foreground: 0 0% 0%;
+  --border: 0 0% 85%;
+  --input: 0 0% 90%;
+  --ring: 43 100% 45%;
+}
+
+.light body {
+  background-color: #f0f2f5;
+  color: #0a0a14;
+}
+
+.light header,
+.light nav {
+  background-color: rgba(255,255,255,0.97) !important;
+  border-color: rgba(0,0,0,0.08) !important;
+}
+
+/* Tailwind base */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Layer utilities */
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+  
+  /* Hide navigation bar on PWA */
+  @media (display-mode: standalone) {
+    body {
+      padding-top: env(safe-area-inset-top);
+    }
+  }
+
+  /* Prevent text selection on UI elements */
+  .no-select {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  /* Tap highlight removal */
+  .no-tap {
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+/* Animation keyframes */
+@keyframes pulse-slow {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+@keyframes slide-up {
+  from { transform: translateY(20px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.animate-slide-up {
+  animation: slide-up 0.3s ease-out;
+}
+
+.animate-fade-in {
+  animation: fade-in 0.2s ease-out;
+}
