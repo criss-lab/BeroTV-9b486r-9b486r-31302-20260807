@@ -16,6 +16,7 @@ import { useTheme } from '@/hooks/useTheme';
 import { channelService } from '@/lib/channelService';
 import { loadChannelsFromM3U, IPTV_SOURCES, CATEGORY_SOURCE_MAP, IPTVChannel, deduplicateChannels, LOAD_TIERS } from '@/lib/iptvService';
 import { AdBanner } from '@/components/features/AdBanner';
+import { EPGGuide } from '@/components/features/EPGGuide';
 import { notificationService } from '@/lib/notificationService';
 import { supabase } from '@/lib/supabase';
 import { toast } from 'sonner';
@@ -88,6 +89,8 @@ export function TVPage() {
   const [notifEnabled, setNotifEnabled] = useState(false);
   const [hasFullAccess, setHasFullAccess] = useState(false);
   const [showPaywall, setShowPaywall] = useState(false);
+  const [expiryWarning, setExpiryWarning] = useState<string | null>(null);
+  const [showEPG, setShowEPG] = useState(false);
 
   const [iptvChannels, setIptvChannels] = useState<WorldChannel[]>(_iptvGlobalCache);
   const [iptvLoading, setIptvLoading] = useState(!_iptvLoaded);
@@ -112,12 +115,24 @@ export function TVPage() {
     if (user.email === ADMIN_EMAIL) { setHasFullAccess(true); return; }
     supabase
       .from('premium_subscriptions')
-      .select('id')
+      .select('id, ends_at')
       .eq('user_id', user.id)
       .eq('status', 'active')
       .gte('ends_at', new Date().toISOString())
       .limit(1)
-      .then(({ data }) => setHasFullAccess(!!data && data.length > 0));
+      .then(({ data }) => {
+        if (data && data.length > 0) {
+          setHasFullAccess(true);
+          // Check expiry warning (3 days)
+          const endsAt = new Date(data[0].ends_at);
+          const daysLeft = Math.ceil((endsAt.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+          if (daysLeft <= 3) {
+            setExpiryWarning(`⚠️ Votre abonnement expire dans ${daysLeft} jour${daysLeft > 1 ? 's' : ''}`);
+          }
+        } else {
+          setHasFullAccess(false);
+        }
+      });
   }, [user]);
 
   // Filter channels
@@ -442,8 +457,33 @@ export function TVPage() {
           </div>
         </div>
 
+        {/* EPG Guide toggle */}
+        <div className="flex items-center justify-between px-4 py-2 border-t border-white/5">
+          <button
+            onClick={() => setShowEPG(v => !v)}
+            className={`flex items-center gap-2 text-xs font-semibold px-3 py-1.5 rounded-full transition-all border ${
+              showEPG
+                ? 'bg-yellow-500/15 border-yellow-500/30 text-yellow-400'
+                : 'bg-white/5 border-white/5 text-gray-400 hover:text-gray-200'
+            }`}
+          >
+            <span>📅</span> Guide TV / EPG
+          </button>
+          <span className="text-[10px] text-gray-600">{showEPG ? 'Masquer' : 'Afficher'} le programme</span>
+        </div>
+        {showEPG && <EPGGuide channel={featuredChannel} />}
         <ChannelComments channelId={featuredChannel.id} channelName={featuredChannel.name} />
       </div>
+
+      {/* Subscription expiry warning */}
+      {expiryWarning && (
+        <div className="mx-4 mt-3 p-3 rounded-xl bg-orange-500/10 border border-orange-500/30 flex items-center justify-between max-w-5xl mx-auto">
+          <p className="text-xs text-orange-300 font-semibold">{expiryWarning}</p>
+          <button onClick={() => navigate('/premium')} className="text-[10px] bg-yellow-500/20 text-yellow-400 px-2.5 py-1 rounded-full font-bold hover:bg-yellow-500/30 flex-shrink-0 ml-2">
+            Renouveler
+          </button>
+        </div>
+      )}
 
       {/* Stats bar */}
       <div className="flex items-center gap-4 px-4 py-2.5 bg-[#0f0f1e] border-y border-white/5 max-w-5xl mx-auto overflow-x-auto scrollbar-hide text-xs">

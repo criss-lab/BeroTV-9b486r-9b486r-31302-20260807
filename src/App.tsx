@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { Toaster } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
 import { SplashScreen } from '@/pages/SplashScreen';
@@ -14,7 +14,18 @@ import { LivePage } from '@/pages/LivePage';
 import { SearchPage } from '@/pages/SearchPage';
 import { PremiumPage } from '@/pages/PremiumPage';
 import { PaymentCallbackPage } from '@/pages/PaymentCallbackPage';
+import { CategoriesPage } from '@/pages/CategoriesPage';
+import { AdminPage } from '@/pages/AdminPage';
 import { useState } from 'react';
+
+// Scroll to top on route change
+function ScrollToTop() {
+  const { pathname } = useLocation();
+  useState(() => {
+    window.scrollTo(0, 0);
+  });
+  return null;
+}
 
 function AppContent() {
   const { loading } = useAuth();
@@ -45,22 +56,27 @@ function AppContent() {
   }
 
   return (
-    <Routes>
-      <Route path="/" element={<TVPage />} />
-      <Route path="/radio" element={<RadioPage />} />
-      <Route path="/community" element={<CommunityPage />} />
-      <Route path="/podcasts" element={<PodcastPage />} />
-      <Route path="/live" element={<LivePage />} />
-      <Route path="/trending" element={<TrendingPage />} />
-      <Route path="/favorites" element={<FavoritesPage />} />
-      <Route path="/profile" element={<ProfilePage />} />
-      <Route path="/profile/:userId" element={<ProfilePage />} />
-      <Route path="/login" element={<LoginPage />} />
-      <Route path="/search" element={<SearchPage />} />
-      <Route path="/premium" element={<PremiumPage />} />
-      <Route path="/payment-callback" element={<PaymentCallbackPage />} />
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+    <>
+      <ScrollToTop />
+      <Routes>
+        <Route path="/" element={<TVPage />} />
+        <Route path="/radio" element={<RadioPage />} />
+        <Route path="/community" element={<CommunityPage />} />
+        <Route path="/podcasts" element={<PodcastPage />} />
+        <Route path="/live" element={<LivePage />} />
+        <Route path="/trending" element={<TrendingPage />} />
+        <Route path="/favorites" element={<FavoritesPage />} />
+        <Route path="/profile" element={<ProfilePage />} />
+        <Route path="/profile/:userId" element={<ProfilePage />} />
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="/search" element={<SearchPage />} />
+        <Route path="/premium" element={<PremiumPage />} />
+        <Route path="/payment-callback" element={<PaymentCallbackPage />} />
+        <Route path="/categories" element={<CategoriesPage />} />
+        <Route path="/admin" element={<AdminPage />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </>
   );
 }
 

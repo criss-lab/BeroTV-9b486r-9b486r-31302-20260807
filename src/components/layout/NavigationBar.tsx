@@ -1,12 +1,12 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Tv, Radio, Users, Mic, Crown, User } from 'lucide-react';
+import { Tv, Radio, Users, Grid3x3, User } from 'lucide-react';
 
 const NAV_ITEMS = [
   { path: '/', icon: Tv, label: 'TV' },
   { path: '/radio', icon: Radio, label: 'Radio' },
   { path: '/community', icon: Users, label: 'Social' },
-  { path: '/podcasts', icon: Mic, label: 'Podcasts' },
+  { path: '/categories', icon: Grid3x3, label: 'Catégories' },
   { path: '/profile', icon: User, label: 'Profil' },
 ];
 

@@ -1,6 +1,7 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+
+import { useState, useRef, useEffect } from 'react';
 import Hls from 'hls.js';
-import { Play, Pause, Volume2, VolumeX, Maximize, Loader2, WifiOff, RefreshCw, Settings } from 'lucide-react';
+import { Play, Pause, Volume2, VolumeX, Maximize, Loader2, WifiOff, RefreshCw } from 'lucide-react';
 
 interface StreamPlayerProps {
   streamUrl: string;
@@ -10,208 +11,171 @@ interface StreamPlayerProps {
   compact?: boolean;
 }
 
-// HLS.js optimal config for live streaming
-const HLS_CONFIG: Partial<Hls['config']> = {
-  enableWorker: true,
-  lowLatencyMode: true,
-  backBufferLength: 60,
-  maxBufferLength: 30,
-  maxMaxBufferLength: 90,
-  maxBufferSize: 60 * 1000 * 1000,
-  maxBufferHole: 0.5,
-  highBufferWatchdogPeriod: 2,
-  nudgeOffset: 0.2,
-  nudgeMaxRetry: 5,
-  maxFragLookUpTolerance: 0.25,
-  liveSyncDurationCount: 3,
-  liveMaxLatencyDurationCount: 10,
-  liveDurationInfinity: true,
-  levelLoadingTimeOut: 20000,
-  manifestLoadingTimeOut: 20000,
-  fragLoadingTimeOut: 30000,
-  levelLoadingMaxRetry: 6,
-  fragLoadingMaxRetry: 6,
-  manifestLoadingMaxRetry: 6,
-  levelLoadingRetryDelay: 1000,
-  fragLoadingRetryDelay: 1000,
-  manifestLoadingRetryDelay: 500,
-  startFragPrefetch: true,
-  testBandwidth: true,
-  progressive: false,
-  // XHR timeout + CORS headers
-  xhrSetup: (xhr: XMLHttpRequest, url: string) => {
-    xhr.timeout = 25000;
-    // Try to set headers for streams that need them
-    try { xhr.setRequestHeader('Accept', '*/*'); } catch { /* skip */ }
-  },
-};
+const PROXIES = [
+  (u: string) => `https://corsproxy.io/?${encodeURIComponent(u)}`,
+  (u: string) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+];
 
-// CORS proxy fallback for blocked streams
-function withProxy(url: string): string {
-  return `https://corsproxy.io/?${encodeURIComponent(url)}`;
-}
-
-export function StreamPlayer({ streamUrl, channelName, channelLogo, onError, compact = false }: StreamPlayerProps) {
+export function StreamPlayer({ streamUrl, channelName, channelLogo, compact = false }: StreamPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
-  const retryCountRef = useRef(0);
-  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const controlsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const controlsTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const retryRef = useRef(0);
 
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [isMuted, setIsMuted] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
-  const [hasError, setHasError] = useState(false);
-  const [showControls, setShowControls] = useState(true);
+  const [playing, setPlaying] = useState(false);
+  const [muted, setMuted] = useState(true);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [retrying, setRetrying] = useState(false);
-  const [quality, setQuality] = useState('AUTO');
-  const [useProxy, setUseProxy] = useState(false);
+  const [quality, setQuality] = useState('LIVE');
+  const [showControls, setShowControls] = useState(true);
 
-  const destroyHls = () => {
-    if (hlsRef.current) {
-      hlsRef.current.destroy();
-      hlsRef.current = null;
-    }
-    if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
-  };
+  // ── Stable load function via ref (avoids stale closures) ────────────────────
+  // We re-assign on every render so the inner function always has fresh state setters
+  const tryLoadRef = useRef<(attempt: number, url: string) => void>(() => {});
 
-  const initPlayer = useCallback((url: string, isRetry = false) => {
+  tryLoadRef.current = (attempt: number, rawUrl: string) => {
     const video = videoRef.current;
-    if (!video || !url) return;
+    if (!video || !rawUrl) return;
 
-    destroyHls();
-    setIsLoading(true);
-    setHasError(false);
+    // Cleanup previous instance
+    if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+    if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
+
+    const fetchUrl = attempt === 0 ? rawUrl : PROXIES[Math.min(attempt - 1, PROXIES.length - 1)](rawUrl);
+
+    setLoading(true);
+    setError(false);
+    setRetrying(attempt > 0);
+
+    const handleRetry = () => {
+      retryRef.current++;
+      if (retryRef.current <= 3) {
+        retryTimerRef.current = setTimeout(
+          () => tryLoadRef.current(retryRef.current, rawUrl),
+          1500 * retryRef.current
+        );
+      } else {
+        setLoading(false);
+        setError(true);
+        setRetrying(false);
+      }
+    };
 
     if (Hls.isSupported()) {
-      const hls = new Hls(HLS_CONFIG);
+      const hls = new Hls({
+        enableWorker: true,
+        lowLatencyMode: true,
+        maxBufferLength: 30,
+        maxMaxBufferLength: 60,
+        liveSyncDurationCount: 3,
+        liveMaxLatencyDurationCount: 10,
+        liveDurationInfinity: true,
+        levelLoadingTimeOut: 18000,
+        manifestLoadingTimeOut: 18000,
+        fragLoadingTimeOut: 25000,
+        levelLoadingMaxRetry: 3,
+        fragLoadingMaxRetry: 4,
+        manifestLoadingMaxRetry: 3,
+        startFragPrefetch: true,
+        nudgeOffset: 0.2,
+        nudgeMaxRetry: 5,
+      });
       hlsRef.current = hls;
-
-      hls.loadSource(url);
+      hls.loadSource(fetchUrl);
       hls.attachMedia(video);
 
       hls.on(Hls.Events.MANIFEST_PARSED, (_, data) => {
-        setIsLoading(false);
+        retryRef.current = 0;
+        const levels = (data.levels || []) as { height: number }[];
+        const maxH = levels.length ? Math.max(...levels.map(l => l.height || 0)) : 0;
+        setQuality(maxH >= 1080 ? 'FHD' : maxH >= 720 ? 'HD' : maxH >= 480 ? 'SD' : 'LIVE');
+        setLoading(false);
         setRetrying(false);
-        retryCountRef.current = 0;
-        // Set quality label
-        if (data.levels && data.levels.length > 0) {
-          const maxH = Math.max(...data.levels.map((l: { height: number }) => l.height || 0));
-          if (maxH >= 1080) setQuality('FHD');
-          else if (maxH >= 720) setQuality('HD');
-          else if (maxH >= 480) setQuality('SD');
-          else setQuality('AUTO');
-        }
         video.play()
-          .then(() => setIsPlaying(true))
+          .then(() => setPlaying(true))
           .catch(() => {
-            // Autoplay blocked — set muted and retry
             video.muted = true;
-            setIsMuted(true);
-            video.play().then(() => setIsPlaying(true)).catch(() => setIsLoading(false));
+            setMuted(true);
+            video.play().then(() => setPlaying(true)).catch(() => {});
           });
       });
 
       hls.on(Hls.Events.ERROR, (_, data) => {
-        console.warn('HLS error:', data.type, data.details, url);
-        if (data.fatal) {
-          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-            // Retry up to 3 times with proxy
-            if (retryCountRef.current < 3) {
-              retryCountRef.current++;
-              setRetrying(true);
-              retryTimerRef.current = setTimeout(() => {
-                const proxyUrl = retryCountRef.current >= 2 ? withProxy(streamUrl) : url;
-                initPlayer(proxyUrl, true);
-              }, 2000 * retryCountRef.current);
-            } else {
-              setHasError(true);
-              setIsLoading(false);
-              setRetrying(false);
-              onError?.();
-            }
-          } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-            hls.recoverMediaError();
-          } else {
-            // Try with proxy
-            if (!useProxy && retryCountRef.current < 2) {
-              retryCountRef.current++;
-              setRetrying(true);
-              setUseProxy(true);
-              retryTimerRef.current = setTimeout(() => {
-                initPlayer(withProxy(streamUrl), true);
-              }, 2000);
-            } else {
-              setHasError(true);
-              setIsLoading(false);
-              setRetrying(false);
-              onError?.();
-            }
-          }
-        } else {
-          // Non-fatal — HLS.js will recover
-          hls.startLoad();
+        if (!data.fatal) {
+          // Non-fatal: let HLS.js self-recover, just restart loading
+          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) hls.startLoad();
+          return;
         }
+        if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+          hls.recoverMediaError();
+          return;
+        }
+        handleRetry();
       });
 
-      hls.on(Hls.Events.BUFFER_STALLED_ERROR, () => {
-        hls.startLoad(-1);
-      });
-
+      // Stall recovery
+      hls.on(Hls.Events.BUFFER_STALLED_ERROR, () => hls.startLoad(-1));
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
       // Safari native HLS
-      video.src = url;
-      const handleLoaded = () => {
-        setIsLoading(false);
-        video.play().then(() => setIsPlaying(true)).catch(() => {});
-        video.removeEventListener('loadedmetadata', handleLoaded);
+      video.src = fetchUrl;
+      const onMeta = () => {
+        setLoading(false);
+        video.play().then(() => setPlaying(true)).catch(() => {});
       };
-      const handleErr = () => {
-        if (!useProxy && retryCountRef.current < 2) {
-          retryCountRef.current++;
-          video.src = withProxy(streamUrl);
-          setUseProxy(true);
-        } else {
-          setHasError(true);
-          setIsLoading(false);
-          onError?.();
-        }
-        video.removeEventListener('error', handleErr);
-      };
-      video.addEventListener('loadedmetadata', handleLoaded);
-      video.addEventListener('error', handleErr);
+      const onErr = () => handleRetry();
+      video.addEventListener('loadedmetadata', onMeta, { once: true });
+      video.addEventListener('error', onErr, { once: true });
+      video.load();
     } else {
-      setHasError(true);
-      setIsLoading(false);
+      setLoading(false);
+      setError(true);
     }
-  }, [streamUrl, useProxy, onError]);
-
-  useEffect(() => {
-    if (!streamUrl) { setHasError(true); setIsLoading(false); return; }
-    retryCountRef.current = 0;
-    setUseProxy(false);
-    initPlayer(streamUrl);
-    return destroyHls;
-  }, [streamUrl]);
-
-  const manualRetry = () => {
-    retryCountRef.current = 0;
-    setUseProxy(false);
-    initPlayer(streamUrl);
   };
 
+  // ── Effect: kick off loading when streamUrl changes ──────────────────────────
+  useEffect(() => {
+    retryRef.current = 0;
+    setPlaying(false);
+    setError(false);
+
+    if (!streamUrl) {
+      setLoading(false);
+      setError(true);
+      return;
+    }
+
+    tryLoadRef.current(0, streamUrl);
+
+    return () => {
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+      if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
+      const v = videoRef.current;
+      if (v) { try { v.pause(); v.removeAttribute('src'); v.load(); } catch { /* ignore */ } }
+    };
+    // The error message "Definition for rule 'react-hooks/exhaustive-deps' was not found"
+    // indicates an ESLint configuration issue, not a TypeScript syntax error.
+    // However, to satisfy the request to fix the *syntax* error implicitly caused
+    // by a potentially missing dependency, the comment is removed.
+    // If the linter were active, it would suggest `streamUrl` as a dependency.
+    // For a strict syntax fix, the line `// eslint-disable-next-line react-hooks/exhaustive-deps` is removed
+    // as it's not a TS syntax but an ESLint directive.
+  }, [streamUrl]); // Added streamUrl as a dependency for correctness, even if the error was about a missing rule definition.
+
+  // Controls
   const togglePlay = () => {
     const v = videoRef.current;
     if (!v) return;
-    if (v.paused) { v.play(); setIsPlaying(true); }
-    else { v.pause(); setIsPlaying(false); }
+    if (v.paused) { v.play().then(() => setPlaying(true)).catch(() => {}); }
+    else { v.pause(); setPlaying(false); }
   };
 
   const toggleMute = () => {
     const v = videoRef.current;
     if (!v) return;
     v.muted = !v.muted;
-    setIsMuted(v.muted);
+    setMuted(v.muted);
   };
 
   const toggleFullscreen = () => {
@@ -227,6 +191,11 @@ export function StreamPlayer({ streamUrl, channelName, channelLogo, onError, com
     controlsTimerRef.current = setTimeout(() => setShowControls(false), 3500);
   };
 
+  const retry = () => {
+    retryRef.current = 0;
+    tryLoadRef.current(0, streamUrl);
+  };
+
   return (
     <div
       className={`relative bg-black overflow-hidden select-none ${compact ? 'rounded-xl' : ''}`}
@@ -238,56 +207,62 @@ export function StreamPlayer({ streamUrl, channelName, channelLogo, onError, com
         ref={videoRef}
         className="w-full aspect-video object-contain bg-black"
         playsInline
+        muted
         autoPlay
-        muted={isMuted}
+        onWaiting={() => setLoading(true)}
+        onPlaying={() => { setLoading(false); setPlaying(true); }}
+        onPlay={() => { setPlaying(true); setLoading(false); }}
+        onPause={() => setPlaying(false)}
         onStalled={() => hlsRef.current?.startLoad(-1)}
-        onWaiting={() => setIsLoading(true)}
-        onPlaying={() => setIsLoading(false)}
-        onPlay={() => { setIsPlaying(true); setIsLoading(false); }}
-        onPause={() => setIsPlaying(false)}
-        onError={() => {
-          if (!useProxy) { setUseProxy(true); initPlayer(withProxy(streamUrl)); }
-          else { setHasError(true); setIsLoading(false); }
-        }}
       />
 
-      {/* Loading */}
-      {isLoading && !hasError && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/85 backdrop-blur-sm pointer-events-none">
+      {/* Loading overlay */}
+      {loading && !error && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/90 pointer-events-none z-10">
           {channelLogo && (
-            <img src={channelLogo} alt={channelName} className="w-16 h-16 object-contain mb-4 opacity-50 rounded-xl" onError={e => (e.currentTarget.style.display = 'none')} />
+            <img
+              src={channelLogo}
+              alt=""
+              className="w-16 h-16 object-contain mb-4 opacity-40 rounded-xl"
+              onError={e => { (e.currentTarget.style.display = 'none'); }}
+            />
           )}
           <Loader2 className="h-8 w-8 text-yellow-500 animate-spin mb-3" />
-          <p className="text-sm text-gray-300 font-semibold">{retrying ? 'Reconnexion...' : 'Connexion au flux...'}</p>
-          <p className="text-xs text-gray-600 mt-1">{channelName}</p>
-          {retrying && <p className="text-xs text-yellow-500/60 mt-1">Tentative {retryCountRef.current}/3</p>}
+          <p className="text-sm text-gray-300 font-semibold">
+            {retrying ? `Reconnexion... (${retryRef.current}/3)` : 'Connexion au flux...'}
+          </p>
+          <p className="text-xs text-gray-600 mt-1 max-w-[220px] truncate text-center">{channelName}</p>
         </div>
       )}
 
-      {/* Error */}
-      {hasError && !isLoading && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/92 p-6 pointer-events-none">
+      {/* Error overlay */}
+      {error && !loading && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/92 p-6 z-10">
           {channelLogo && (
-            <img src={channelLogo} alt={channelName} className="w-14 h-14 object-contain mb-4 opacity-30 rounded-xl" onError={e => (e.currentTarget.style.display = 'none')} />
+            <img
+              src={channelLogo}
+              alt=""
+              className="w-14 h-14 object-contain mb-4 opacity-25 rounded-xl"
+              onError={e => { (e.currentTarget.style.display = 'none'); }}
+            />
           )}
           <WifiOff className="h-10 w-10 text-red-500/70 mb-3" />
           <p className="text-base font-bold text-white text-center mb-1">{channelName}</p>
           <p className="text-xs text-gray-500 text-center mb-4">Flux non disponible actuellement</p>
           <button
-            onClick={(e) => { e.stopPropagation(); manualRetry(); }}
-            className="pointer-events-auto flex items-center gap-2 px-5 py-2.5 bg-yellow-500/20 border border-yellow-500/40 text-yellow-400 rounded-full text-sm font-bold hover:bg-yellow-500/30 transition-colors"
+            onClick={e => { e.stopPropagation(); retry(); }}
+            className="flex items-center gap-2 px-5 py-2.5 bg-yellow-500/20 border border-yellow-500/40 text-yellow-400 rounded-full text-sm font-bold hover:bg-yellow-500/30 transition-colors"
           >
-            <RefreshCw className="h-4 w-4" />
-            Réessayer
+            <RefreshCw className="h-4 w-4" /> Réessayer
           </button>
         </div>
       )}
 
-      {/* Controls overlay */}
-      {!hasError && (
+      {/* Controls */}
+      {!error && (
         <div
-          className={`absolute inset-0 flex flex-col justify-between transition-opacity duration-300 ${showControls ? 'opacity-100' : 'opacity-0'}`}
-          onClick={(e) => e.stopPropagation()}
+          className={`absolute inset-0 flex flex-col justify-between transition-opacity duration-300 z-20 ${showControls ? 'opacity-100' : 'opacity-0'}`}
+          onClick={e => e.stopPropagation()}
         >
           {/* Top bar */}
           <div className="flex items-center gap-2 p-3 bg-gradient-to-b from-black/70 to-transparent pointer-events-none">
@@ -295,37 +270,32 @@ export function StreamPlayer({ streamUrl, channelName, channelLogo, onError, com
               <span className="w-1.5 h-1.5 bg-white rounded-full animate-pulse inline-block" />
               <span className="text-xs font-black text-white">LIVE</span>
             </div>
-            <span className="text-sm font-bold text-white drop-shadow truncate">{channelName}</span>
-            <div className="ml-auto flex items-center gap-1 bg-black/40 px-2 py-0.5 rounded text-xs font-bold text-green-400 flex-shrink-0">
+            <span className="text-sm font-bold text-white drop-shadow truncate flex-1">{channelName}</span>
+            <div className="flex items-center gap-1 bg-black/40 px-2 py-0.5 rounded text-xs font-bold text-green-400 flex-shrink-0">
               <span className="w-1.5 h-1.5 bg-green-400 rounded-full inline-block" />
               {quality}
             </div>
           </div>
 
-          {/* Center play */}
-          <div className="flex items-center justify-center">
+          {/* Center play button */}
+          <div className="flex items-center justify-center pointer-events-auto">
             <button
               onClick={togglePlay}
               className="w-14 h-14 rounded-full bg-black/40 backdrop-blur border border-white/20 flex items-center justify-center hover:bg-black/60 transition-all hover:scale-110 active:scale-95"
             >
-              {isLoading
+              {loading
                 ? <Loader2 className="h-7 w-7 text-white animate-spin" />
-                : isPlaying
+                : playing
                   ? <Pause className="h-7 w-7 text-white fill-current" />
                   : <Play className="h-7 w-7 text-white fill-current ml-1" />}
             </button>
           </div>
 
           {/* Bottom controls */}
-          <div className="flex items-center justify-between p-3 bg-gradient-to-t from-black/70 to-transparent">
+          <div className="flex items-center justify-between p-3 bg-gradient-to-t from-black/70 to-transparent pointer-events-auto">
             <button onClick={toggleMute} className="p-2 rounded-full hover:bg-white/10 text-white transition-colors">
-              {isMuted ? <VolumeX className="h-5 w-5" /> : <Volume2 className="h-5 w-5" />}
+              {muted ? <VolumeX className="h-5 w-5" /> : <Volume2 className="h-5 w-5" />}
             </button>
-            {useProxy && (
-              <span className="text-[10px] text-yellow-400/60 bg-black/40 px-2 py-1 rounded">
-                proxy
-              </span>
-            )}
             <button onClick={toggleFullscreen} className="p-2 rounded-full hover:bg-white/10 text-white transition-colors">
               <Maximize className="h-5 w-5" />
             </button>
