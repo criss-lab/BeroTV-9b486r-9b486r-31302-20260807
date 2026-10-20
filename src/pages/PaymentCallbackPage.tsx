@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { fetchPremiumEntitlement, notifyPremiumChanged } from '@/hooks/usePremiumAccess';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/hooks/useAuth';
@@ -14,67 +15,71 @@ export function PaymentCallbackPage() {
   const { user } = useAuth();
 
   useEffect(() => {
-    const orderTrackingId =
-      searchParams.get('OrderTrackingId') ||
-      searchParams.get('orderTrackingId') ||
-      searchParams.get('order_tracking_id');
-
+    const orderTrackingId = searchParams.get('OrderTrackingId') || searchParams.get('orderTrackingId') || searchParams.get('order_tracking_id');
     if (!orderTrackingId) {
       setStatus('failed');
-      setMessage('Paramètres de paiement manquants. Vérifiez votre e-mail pour confirmation.');
+      setMessage('Référence de paiement manquante. Vérifiez votre abonnement depuis Premium.');
       return;
     }
-
+    if (!user?.id) {
+      setMessage('Connexion requise pour confirmer votre abonnement...');
+      return;
+    }
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     let attempts = 0;
-    const maxAttempts = 5;
-
     const checkPayment = async () => {
+      if (cancelled) return;
       attempts++;
       try {
+        // Server must authenticate the caller, validate order ownership, verify with PesaPal,
+        // and persist the subscription before reporting completion.
         const { data, error } = await supabase.functions.invoke('pesapal-payment', {
-          body: { action: 'check_status', orderTrackingId, userId: user?.id },
+          body: { action: 'check_status', orderTrackingId },
         });
-
         if (error) {
-          let errorMsg = error.message;
+          let message = error.message;
           if (error instanceof FunctionsHttpError) {
-            try { errorMsg = await error.context.text(); } catch { /* ignore */ }
+            try { message = await error.context.text(); } catch { /* ignore */ }
           }
-          throw new Error(errorMsg);
+          throw new Error(message);
         }
-
+        if (cancelled) return;
         const payStatus = data?.payment_status_description;
-        console.log('Payment status:', payStatus);
-
-        if (payStatus === 'Completed') {
+        // Never unlock from a redirect or PesaPal status alone. Wait until the
+        // verified, user-owned entitlement is visible in the database.
+        const entitlement = await fetchPremiumEntitlement(user.id);
+        if (cancelled) return;
+        if (entitlement.active) {
+          notifyPremiumChanged();
           setStatus('success');
-          setMessage('Votre abonnement Premium est actif pour 4 semaines!');
-          toast.success('Paiement réussi! Bienvenue Premium! 🎉');
-          setTimeout(() => navigate('/'), 4000);
-        } else if (payStatus === 'Failed' || payStatus === 'Invalid') {
-          setStatus('failed');
-          setMessage(`Statut: ${payStatus}. Aucun montant n'a été débité.`);
-        } else if (attempts < maxAttempts) {
-          setMessage(`Paiement en attente... (${payStatus || 'Processing'})`);
-          setTimeout(checkPayment, 4000);
-        } else {
-          setStatus('failed');
-          setMessage('Le paiement est en cours de traitement. Vérifiez votre e-mail.');
+          setMessage('Votre abonnement Premium est actif!');
+          toast.success('Paiement confirmé! Bienvenue Premium! 🎉');
+          timer = setTimeout(() => { if (!cancelled) navigate('/'); }, 1800);
+          return;
         }
-      } catch (e) {
-        console.error('Payment check error:', e);
-        if (attempts < maxAttempts) {
-          setTimeout(checkPayment, 5000);
-        } else {
+        if (payStatus === 'Failed' || payStatus === 'Invalid') {
           setStatus('failed');
-          setMessage(e instanceof Error ? e.message : 'Erreur de vérification');
+          setMessage(`Paiement non confirmé: ${payStatus}. Vérifiez votre transaction PesaPal.`);
+          return;
         }
+        setMessage(payStatus === 'Completed'
+          ? 'Paiement reçu. Activation de votre abonnement en cours...'
+          : `Vérification du paiement... (${payStatus || 'Processing'})`);
+      } catch (error) {
+        if (cancelled) return;
+        console.error('Payment verification error:', error);
+        setMessage('Synchronisation en cours. Ne payez pas une deuxième fois.');
+      }
+      if (attempts < 24) timer = setTimeout(checkPayment, 5000);
+      else {
+        setStatus('failed');
+        setMessage('Activation toujours en attente. Vérifiez Premium ou contactez le support avec votre référence de paiement; ne payez pas deux fois.');
       }
     };
-
-    const timer = setTimeout(checkPayment, 1000);
-    return () => clearTimeout(timer);
-  }, [searchParams, user?.id]);
+    timer = setTimeout(checkPayment, 500);
+    return () => { cancelled = true; if (timer) clearTimeout(timer); };
+  }, [searchParams, user?.id, navigate]);
 
   return (
     <div className="min-h-screen bg-[#0a0a14] flex flex-col items-center justify-center p-6">
