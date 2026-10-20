@@ -18,12 +18,11 @@ import { loadChannelsFromM3U, IPTV_SOURCES, CATEGORY_SOURCE_MAP, IPTVChannel, de
 import { AdBanner } from '@/components/features/AdBanner';
 import { EPGGuide } from '@/components/features/EPGGuide';
 import { notificationService } from '@/lib/notificationService';
-import { supabase } from '@/lib/supabase';
+import { usePremiumAccess } from '@/hooks/usePremiumAccess';
 import { toast } from 'sonner';
 
 const PAGE_SIZE = 40;
 const FREE_LIMIT = 15;
-const ADMIN_EMAIL = 'nahashonnyaga794@gmail.com';
 
 function iptvToWorld(ch: IPTVChannel, idx: number): WorldChannel {
   return {
@@ -87,7 +86,6 @@ export function TVPage() {
   const [isFollowed, setIsFollowed] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [notifEnabled, setNotifEnabled] = useState(false);
-  const [hasFullAccess, setHasFullAccess] = useState(false);
   const [showPaywall, setShowPaywall] = useState(false);
   const [expiryWarning, setExpiryWarning] = useState<string | null>(null);
   const [showEPG, setShowEPG] = useState(false);
@@ -109,31 +107,12 @@ export function TVPage() {
   // Merge channels
   const allChannels: WorldChannel[] = deduplicateChannels([...WORLD_CHANNELS, ...iptvChannels]) as WorldChannel[];
 
-  // Check premium/admin access
+  const { active: hasFullAccess, endsAt } = usePremiumAccess(user);
   useEffect(() => {
-    if (!user) { setHasFullAccess(false); return; }
-    if (user.email === ADMIN_EMAIL) { setHasFullAccess(true); return; }
-    supabase
-      .from('premium_subscriptions')
-      .select('id, ends_at')
-      .eq('user_id', user.id)
-      .eq('status', 'active')
-      .gte('ends_at', new Date().toISOString())
-      .limit(1)
-      .then(({ data }) => {
-        if (data && data.length > 0) {
-          setHasFullAccess(true);
-          // Check expiry warning (3 days)
-          const endsAt = new Date(data[0].ends_at);
-          const daysLeft = Math.ceil((endsAt.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
-          if (daysLeft <= 3) {
-            setExpiryWarning(`⚠️ Votre abonnement expire dans ${daysLeft} jour${daysLeft > 1 ? 's' : ''}`);
-          }
-        } else {
-          setHasFullAccess(false);
-        }
-      });
-  }, [user]);
+    if (!endsAt) { setExpiryWarning(null); return; }
+    const daysLeft = Math.ceil((new Date(endsAt).getTime() - Date.now()) / 86400000);
+    setExpiryWarning(daysLeft <= 3 ? `⚠️ Votre abonnement expire dans ${daysLeft} jour${daysLeft > 1 ? 's' : ''}` : null);
+  }, [endsAt]);
 
   // Filter channels
   const filteredChannels = (() => {
