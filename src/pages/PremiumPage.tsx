@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Crown, Check, Zap, Star, Globe, Tv, Loader2, Shield, CreditCard, Lock, ArrowLeft } from 'lucide-react';
 import { NavigationBar } from '@/components/layout/NavigationBar';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/lib/supabase';
+import { usePremiumAccess } from '@/hooks/usePremiumAccess';
 import { FunctionsHttpError } from '@supabase/supabase-js';
 import { toast } from 'sonner';
 
@@ -19,28 +20,11 @@ const PREMIUM_FEATURES = [
 ];
 
 export function PremiumPage() {
-  const [isPremium, setIsPremium] = useState(false);
-  const [loading, setLoading] = useState(true);
   const [paying, setPaying] = useState(false);
   const { user } = useAuth();
   const navigate = useNavigate();
 
-  useEffect(() => {
-    if (!user) { setLoading(false); return; }
-    if (user.email === ADMIN_EMAIL) { setIsPremium(true); setLoading(false); return; }
-
-    supabase
-      .from('premium_subscriptions')
-      .select('id, ends_at, status')
-      .eq('user_id', user.id)
-      .eq('status', 'active')
-      .gte('ends_at', new Date().toISOString())
-      .limit(1)
-      .then(({ data }) => {
-        setIsPremium(!!data && data.length > 0);
-        setLoading(false);
-      });
-  }, [user]);
+  const { active: isPremium, loading } = usePremiumAccess(user);
 
   const handlePesaPalPayment = async () => {
     if (!user) { navigate('/login'); return; }
